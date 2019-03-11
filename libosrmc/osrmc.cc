@@ -215,6 +215,25 @@ float osrmc_route_response_duration(osrmc_route_response_t response, osrmc_error
   return INFINITY;
 }
 
+osrmc_table_annotations_t osrmc_table_annotations_construct(osrmc_error_t* error) try {
+  auto* out = new osrm::TableParameters::AnnotationsType{osrm::TableParameters::AnnotationsType::Duration};
+  return reinterpret_cast<osrmc_table_annotations_t>(out);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+void osrmc_table_annotations_destruct(osrmc_table_annotations_t annotations) {
+  delete reinterpret_cast<osrm::TableParameters::AnnotationsType*>(annotations);
+}
+
+void osrmc_table_annotations_set_distance(osrmc_table_annotations_t annotations, osrmc_error_t* error) try {
+  auto* annotations_typed = reinterpret_cast<osrm::TableParameters::AnnotationsType*>(annotations);
+  *annotations_typed |= osrm::TableParameters::AnnotationsType::Distance;
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+}
+
 osrmc_table_params_t osrmc_table_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::TableParameters;
   return reinterpret_cast<osrmc_table_params_t>(out);
@@ -241,17 +260,30 @@ void osrmc_table_params_add_destination(osrmc_table_params_t params, size_t inde
   osrmc_error_from_exception(e, error);
 }
 
+void osrmc_table_params_set_annotations(osrmc_table_params_t params, osrmc_table_annotations_t annotations, osrmc_error_t* error) try {
+  auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
+  auto* annotations_typed = reinterpret_cast<osrm::TableParameters::AnnotationsType*>(annotations);
+  params_typed->annotations = *annotations_typed;
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+}
+
+struct osrmc_table_response {
+  osrm::json::Object json;
+  osrm::TableParameters::AnnotationsType annotations;
+};
+
 osrmc_table_response_t osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t params, osrmc_error_t* error) try {
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
 
-  auto* out = new osrm::json::Object;
-  const auto status = osrm_typed->Table(*params_typed, *out);
+  auto* resp = new osrmc_table_response{osrm::json::Object{}, params_typed->annotations};
+  const auto status = osrm_typed->Table(*params_typed, resp->json);
 
   if (status == osrm::Status::Ok)
-    return reinterpret_cast<osrmc_table_response_t>(out);
+    return resp;
 
-  osrmc_error_from_json(out, error);
+  osrmc_error_from_json(&resp->json, error);
   return nullptr;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -259,20 +291,47 @@ osrmc_table_response_t osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t param
 }
 
 void osrmc_table_response_destruct(osrmc_table_response_t response) {
-  delete reinterpret_cast<osrm::json::Object*>(response);
+  delete response;
 }
 
 float osrmc_table_response_duration(osrmc_table_response_t response, unsigned long from, unsigned long to,
                                     osrmc_error_t* error) try {
-  auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
-
-  auto& durations = response_typed->values["durations"].get<osrm::json::Array>();
+  auto& durations = response->json.values["durations"].get<osrm::json::Array>();
   auto& durations_from_to_all = durations.values.at(from).get<osrm::json::Array>();
-  auto duration = durations_from_to_all.values.at(to).get<osrm::json::Number>().value;
+  auto optional = durations_from_to_all.values.at(to);
+
+  if (optional.is<osrm::json::Null>()) {
+    *error = new osrmc_error{"NoRoute", "Impossible route between points"};
+    return INFINITY;
+  }
+  auto duration = optional.get<osrm::json::Number>().value;
 
   return duration;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
+  return INFINITY;
+}
+
+float osrmc_table_response_distance(osrmc_table_response_t response, unsigned long from, unsigned long to,
+                                    osrmc_error_t* error) try {
+  if (!(response->annotations & osrm::TableParameters::AnnotationsType::Distance)) {
+    *error = new osrmc_error{"NoTable", "Table request not configured to return distances"};
+    return INFINITY;
+  }
+
+  auto& distances = response->json.values["distances"].get<osrm::json::Array>();
+  auto& distances_from_to_all = distances.values.at(from).get<osrm::json::Array>();
+  auto optional = distances_from_to_all.values.at(to);
+
+  if (optional.is<osrm::json::Null>()) {
+    *error = new osrmc_error{"NoRoute", "Impossible route between points"};
+    return INFINITY;
+  }
+  auto distance = optional.get<osrm::json::Number>().value;
+
+  return distance;
+} catch (const std::exception& e) {
+  *error = new osrmc_error{e.what()};
   return INFINITY;
 }
 

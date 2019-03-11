@@ -29,6 +29,21 @@ struct osrmc_error final {
   std::string message;
 };
 
+void osrmc_error_from_json(osrm::json::Object* json, osrmc_error_t* error) try {
+  if (json == nullptr) {
+    *error = new osrmc_error{"service request failed"};
+  }
+
+  std::ostringstream stream;
+  auto code = json->values["code"].get<osrm::json::String>().value;
+  auto message = json->values["message"].get<osrm::json::String>().value;
+  stream << code << ": " << message;
+
+  *error = new osrmc_error{stream.str()};
+} catch (const std::exception& e) {
+  *error = new osrmc_error{"service request failed"};
+}
+
 const char* osrmc_error_message(osrmc_error_t error) { return error->message.c_str(); }
 
 void osrmc_error_destruct(osrmc_error_t error) { delete error; }
@@ -126,7 +141,7 @@ osrmc_route_response_t osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t param
   if (status == osrm::Status::Ok)
     return reinterpret_cast<osrmc_route_response_t>(out);
 
-  *error = new osrmc_error{"service request failed"};
+  osrmc_error_from_json(out, error);
   return nullptr;
 } catch (const std::exception& e) {
   *error = new osrmc_error{e.what()};
@@ -142,7 +157,7 @@ void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_wayp
   const auto status = osrm_typed->Route(*params_typed, result);
 
   if (status != osrm::Status::Ok) {
-    *error = new osrmc_error{"service request failed"};
+    osrmc_error_from_json(&result, error);
     return;
   }
 
@@ -228,7 +243,7 @@ osrmc_table_response_t osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t param
   if (status == osrm::Status::Ok)
     return reinterpret_cast<osrmc_table_response_t>(out);
 
-  *error = new osrmc_error{"service request failed"};
+  osrmc_error_from_json(out, error);
   return nullptr;
 } catch (const std::exception& e) {
   *error = new osrmc_error{e.what()};
